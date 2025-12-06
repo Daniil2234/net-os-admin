@@ -1,0 +1,554 @@
+---
+## Author
+author:
+  name: Седохин Даниил Алексеевич
+  degrees: DSc
+  orcid: 0000-0002-0877-7063
+  email: 1132231845@pfur.ru
+  affiliation:
+    - name: Российский университет дружбы народов
+      country: Российская Федерация
+      postal-code: 117198
+      city: Москва
+      address: ул. Миклухо-Маклая, д. 6
+
+## Title
+title: "Отчёт по лабораторной работе 14"
+subtitle: "Настройка файловых служб Samba"
+license: "CC BY"
+---
+
+# Цель работы
+
+Приобретение навыков настройки доступа групп пользователей к общим ресурсам по протоколу SMB.
+
+# Задание
+
+1. Установите и настройте сервер Samba (см. раздел 14.4.1).
+2. Настройте на клиенте доступ к разделяемым ресурсам (см. раздел 14.4.2).
+3. Напишите скрипты для Vagrant, фиксирующие действия по установке и настройке
+сервера Samba для доступа к разделяемым ресурсам во внутреннем окружении
+виртуальных машин server и client. Соответствующим образом необходимо внести
+изменения в Vagrantfile (см. раздел 14.4.3).
+
+# Выполнение лабораторной работы
+
+На сервере установим необходимое программное обеспечение с помощью команды:
+
+dnf -y install samba samba-client cifs-utils
+([рис. @fig-001]).
+
+![Установка необходимого программного обеспечения](image/1.png){#fig-001 width=70%}
+
+Создадим группу sambagroup для пользователей, которые будут работать с Sambaсервером, и присвоим ей GID 1010:
+
+groupadd -g 1010 sambagroup
+
+Добавим пользователя dasedokhin к группе sambagroup:
+
+usermod -aG sambagroup user
+
+Создадим общий каталог в файловой системе Linux, в который предполагается
+монтировать разделяемые ресурсы:
+
+mkdir -p /srv/sambashare
+
+([рис. @fig-002]).
+
+![Создание группы sambagroup, добавление пользователя dasedokhin и создание каталога для монтирования разделяемых ресурсов](image/2.png){#fig-002 width=70%}
+
+В файле конфигурации /etc/samba/smb.conf:
+(a) измениим параметр рабочей группы:
+
+[global]
+workgroup = USER-DASEDOKHIN 
+
+(b) в конце файла добавьим раздел с описанием общего доступа к разделяемому
+ресурсу /srv/sambashare:
+
+[sambashare]
+comment = My Samba Share
+path = /srv/sambashare
+write list = @sambagroup
+([рис. @fig-003]).
+
+
+![Редактирование файла smb.conf. Изменение рабочей группы и добавление раздела с описанием общего доступа к разделяемому ресурсу](image/3.png){#fig-003 width=70%}
+
+Убедимся, что мы не сделали синтаксических ошибок в файле smb.conf, используя
+команду:
+
+testparm([рис. @fig-004]).
+
+![Проверка файла smb.conf на синтаксические ошибки](image/4.png){#fig-004 width=70%}
+
+Запустим Samba и посмотрим его статус:
+
+systemctl start smb
+
+systemctl enable smb
+
+systemctl status smb
+([рис. @fig-005]).
+
+![Запуск Samba и просмотр статуса](image/5.png){#fig-005 width=70%}
+
+Для проверки наличия общего доступа попробуем подключиться к серверу с помощью smbclient:
+
+smbclient -L //server
+
+(при запросе пароля нажимаем Enter для работы под анонимным пользователем).\
+
+Посмотрим файл конфигурации межсетевого экрана для Samba:
+
+less /usr/lib/firewalld/services/samba.xml
+
+([рис. @fig-006]).
+
+![Проверка наличия общего доступа и просмотр файла конфигурации межсетевого экрана Samba](image/6.png){#fig-006 width=70%}
+
+Настроим межсетевой экран:
+
+firewall-cmd --add-service=samba
+
+firewall-cmd --add-service=samba --permanent
+
+firewall-cmd --reload
+
+Настроим права доступа для каталога с разделяемым ресурсом:
+
+chgrp sambagroup /srv/sambashare
+
+chmod g=rwx /srv/sambashare
+([рис. @fig-007]).
+
+![Настройка межсетевого экрана и прав доступа для каталога с разделяемым ресурсом](image/7.png){#fig-007 width=70%}
+
+Посмотрим контекст безопасности SELinux:
+
+cd /srv
+
+ls -Z
+
+Настроим контекст безопасности SELinux для каталога с разделяемым ресурсом:
+
+semanage fcontext -a -t samba_share_t "/srv/sambashare(/.*)?"
+
+restorecon -vR /srv/sambashare
+
+Проверим, что контекст безопасности изменился:
+
+cd /srv
+
+ls -Z
+
+Разрешим экспортировать разделяемые ресурсы для чтения и записи:
+
+setsebool samba_export_all_rw 1
+
+setsebool samba_export_all_rw 1 -P
+
+Посмотрим UID пользователя и в какие группы он включён:
+
+id
+
+([рис. @fig-008]).
+
+![Просмотр контекста безопасности, его настройка, проверка его изменений. Разрешение экспорта разделяемых ресурсов для чтения и записи и просмотр UID пользователя и в какие группы он входит](image/8.png){#fig-008 width=70%}
+
+Под пользователем dasedokhin попробуем создать файл на разделяемом ресурсе:
+
+cd /srv/sambashare
+
+touch dasedokhin@server.txt
+([рис. @fig-009]).
+
+![Попытка создать файл на разделяемом ресурсе под пользователем dasedokhin](image/9.png){#fig-009 width=70%}
+
+Добавим пользователя dasedokhin в базу пользователей Samba:
+
+smbpasswd -L -a dasedokhin
+
+(при запросе указываем пароль для SMB-пользователя)
+([рис. @fig-010]).
+
+![Добавление пользователя dasedokhin в базу пользователей Samba](image/10.png){#fig-010 width=70%}
+
+На клиенте установите необходимые пакеты:
+
+dnf -y install samba-client cifs-utils
+([рис. @fig-011]).
+
+![Установка необходимых пакетов на клиенте](image/11.png){#fig-011 width=70%}
+
+На клиенте посмотрим файл конфигурации межсетевого экрана для клиента
+Samba:
+
+less /usr/lib/firewalld/services/samba-client.xml([рис. @fig-012]).
+
+![Просмотр файла конфигурации межсетевого экрана для клиента samba-client.xml](image/12.png){#fig-012 width=70%}
+
+На клиенте настроим межсетевой экран:
+
+firewall-cmd --add-service=samba-client
+
+firewall-cmd --add-service=samba-client --permanent
+
+firewall-cmd --reload
+
+На клиенте создадим группу sambagroup и добавим в неё пользователя dasedokhin:
+
+groupadd -g 1010 sambagroup
+
+usermod -aG sambagroup user([рис. @fig-013]).
+
+![Настройка межсетевого экрана. Создание группы sambagroup и добавление пользователя dasedokhin](image/13.png){#fig-013 width=70%}
+
+На клиенте в файле конфигурации /etc/samba/smb.conf измениим параметр рабочей группы:
+
+[global]
+workgroup = USER-DASEDOKHIN
+([рис. @fig-014]).
+
+![Редактирование файла smb.conf, добавление параметра рабочей группы](image/14.png){#fig-014 width=70%}
+
+Для проверки наличия общего доступа попробуем подключиться с клиента к серверу с помощью smbclient:
+
+smbclient -L //server
+
+Подключимся с клиента к серверу с помощью smbclient под учётной записью dasedokhin:
+
+smbclient -L //server -U dasedokhin
+([рис. @fig-015]).
+
+![Проверка наличия общего доступа и подключение с клиента к серверу с помощью smbclient под учетной записью dasedokhin](image/15.png){#fig-015 width=70%}
+
+На клиенте создадим точку монтирования:
+
+mkdir /mnt/samba
+
+На клиенте получим доступ к общему ресурсу с помощью mount:
+
+mount -o username=user_name,user,rw,uid=user_name,gid=sambagroup //server/sambashare /mnt/samba
+
+При появлении запроса пароля вводим пароль SMB-пользователя.
+
+Убедимся, что user может записывать файлы на разделяемом ресурсе:
+
+cd /mnt/samba
+
+touch dasedokhin@client.txt
+
+Отмонтируем каталог /mnt/samba:
+
+umount /mnt/samba
+([рис. @fig-016]).
+
+![Создание точки монтирования, получение доступа к общему ресурсу с помощью mount, проверка возможности записывать файлы на разделяемом ресурсе, отмонтирование каталога](image/16.png){#fig-016 width=70%}
+
+Для настройки работы с Samba с помощью файла учётных данных:
+
+(a) на клиенте создаем файл smbusers в каталоге /etc/samba/:
+
+touch /etc/samba/smbusers
+
+chmod 600 /etc/samba/smbusers
+([рис. @fig-017]).
+
+![Создание файла smbusers в каталоге /etc/samba](image/17.png){#fig-017 width=70%}
+
+Прописываем следующее содержание файла:
+
+username=dasedokhin
+
+password=123456
+([рис. @fig-018]).
+
+![Редактирование файла smbusers](image/18.png){#fig-018 width=70%}
+
+На клиенте в файле /etc/fstab добавим следующую строку:
+
+//server/sambashare /mnt/samba cifs dasedokhin,rw,uid=dasedokhin_name,gid=sambagroup,
+credentials=/etc/samba/smbusers,_netdev 0 0
+([рис. @fig-019]).
+
+![Редактирование файла etc/fstab на клиенте](image/19.png){#fig-019 width=70%}
+
+Подмонтируем общий ресурс:
+
+mount -a
+([рис. @fig-020]).
+
+![Монтирование общего ресурса](image/20.png){#fig-020 width=70%}
+
+Убедившись, что ресурс монтируется, перезагружаем клиента для проверки, что ресурс монтируется и после перезагрузки, а у пользователя есть доступ
+к разделяемым ресурсам.
+
+([рис. @fig-021]).
+
+![Проверка монтирования ресурса после перезагрузки и доступ пользователя к разделяемым ресурсам](image/21.png){#fig-021 width=70%}
+
+На виртуальной машине server перейдем в каталог для внесения изменений
+в настройки внутреннего окружения /vagrant/provision/server/, создадим в нём
+каталог smb, в который поместим в соответствующие подкаталоги конфигурационные файлы:
+
+cd /vagrant/provision/server
+
+mkdir -p /vagrant/provision/server/smb/etc/samba
+
+cp -R /etc/samba/smb.conf /vagrant/provision/server/smb/etc/samba/
+
+В каталоге /vagrant/provision/server создадим исполняемый файл smb.sh:
+
+cd /vagrant/provision/server
+
+touch smb.sh
+
+chmod +x smb.sh
+([рис. @fig-022]).
+
+![Внесение изменений в настройки внутреннего окружения виртуальной машины сервер](image/22.png){#fig-022 width=70%}
+
+Открыв его на редактирование, пропишем в нём следующий скрипт:
+
+#!/bin/bash
+
+LOGIN=user
+
+PASS=123456
+
+echo "Provisioning script $0"
+
+echo "Install needed packages"
+
+dnf -y install samba samba-client cifs-utils
+
+echo "Copy configuration files"
+
+cp -R /vagrant/provision/server/smb/etc/* /etc
+
+chown -R root:root /etc/samba/*
+
+restorecon -vR /etc
+
+echo "Configure firewall"
+
+firewall-cmd --add-service samba --permanent
+
+firewall-cmd --reload
+
+echo "Users and groups"
+
+groupadd -g 1010 sambagroup
+
+usermod -aG sambagroup $LOGIN
+
+echo -ne "$PASS\n$PASS\n" | smbpasswd -L -a -s $LOGIN
+
+echo "Make share dir"
+
+mkdir -p /srv/sambashare
+
+chgrp sambagroup /srv/sambashare
+
+chmod g=rwx /srv/sambashare
+
+echo "Tuning SELinux"
+
+semanage fcontext -a -t samba_share_t "/srv/sambashare(/.*)?"
+
+setsebool samba_export_all_rw 1
+
+setsebool samba_export_all_rw 1 -P
+
+restorecon -vR /srv/sambashare
+
+echo "Start smb service"
+
+systemctl enable smb
+
+systemctl start smb
+
+systemctl restart firewalld
+([рис. @fig-023]).
+
+![Скрипт в файле smb.sh](image/23.png){#fig-023 width=70%}
+
+На виртуальной машине client перейдем в каталог для внесения изменений
+в настройки внутреннего окружения /vagrant/provision/client/, создадим в нём
+каталог smb, в который поместим в соответствующие подкаталоги конфигурационные файлы:
+
+cd /vagrant/provision/client
+
+mkdir -p /vagrant/provision/client/smb/etc/samba
+
+cp -R /etc/samba/smb.conf /vagrant/provision/client/smb/etc/samba/
+
+cp -R /etc/samba/smbusers /vagrant/provision/client/smb/etc/samba/
+
+В каталоге /vagrant/provision/client создадим исполняемый файл smb.sh:
+
+cd /vagrant/provision/client
+
+touch smb.sh
+
+chmod +x smb.sh
+([рис. @fig-024]).
+
+![Внесение изменений в настройки внутреннего окружения виртуальной машины клиент](image/24.png){#fig-024 width=70%}
+
+Открыв его на редактирование, пропишем в нём следующий скрипт:
+
+#!/bin/bash
+
+LOGIN=user
+
+echo "Provisioning script $0"
+
+mkdir -p /mnt/samba
+
+echo "Install needed packages"
+
+dnf -y install samba-client cifs-utils
+
+echo "Copy configuration files"
+
+cp -R /vagrant/provision/client/smb/etc/* /etc
+
+chown -R root:root /etc/samba/*
+
+restorecon -vR /etc
+
+echo "Configure firewall"
+
+firewall-cmd --add-service samba-client --permanent
+
+firewall-cmd --reload
+
+echo "Users and groups"
+
+groupadd -g 1010 sambagroup
+
+usermod -aG sambagroup $LOGIN
+
+echo "Mounting dirs"
+
+mkdir -p /srv/sambashare
+
+echo "//server/sambashare /mnt/samba cifs
+
+user,rw,credentials=/etc/samba/smbusers,uid=user,
+
+gid=sambagroup,_netdev 0 0" >> /etc/fstab
+
+restorecon -vR /etc
+
+umount /mnt/samba
+
+mount /mnt/samba
+([рис. @fig-025]).
+
+![Скрипт файла smb.sh на клиенте](image/25.png){#fig-025 width=70%}
+
+Для отработки созданных скриптов во время загрузки виртуальных машин server
+и client в конфигурационном файле Vagrantfile необходимо добавить в соответствующих разделах конфигураций для сервера и клиента:
+
+server.vm.provision "SMB server",
+
+type: "shell",
+
+preserve_order: true,
+
+path: "provision/server/smb.sh"
+
+([рис. @fig-026]).
+
+![Скрипт конфигураций сервера](image/26.png){#fig-026 width=70%}
+
+И прописываем следующий скрипт в разделе конфигурации клиента:
+
+client.vm.provision "SMB client",
+
+type: "shell",
+
+preserve_order: true,
+
+path: "provision/client/smb.sh"
+([рис. @fig-027]).
+
+![Скрипт конфигураций клиента](image/27.png){#fig-027 width=70%}
+
+# Контрольные вопросы
+
+1 - минимальная конфигурация:
+
+[global]
+    workgroup = WORKGROUP
+    server string = Samba Server
+    security = user
+
+[data]
+    path = /data
+    browseable = yes
+    read only = no
+    guest ok = no
+
+2 - настройка общего ресурса с записью для всех пользователей:
+
+[share]
+    path = /path/to/share
+    browseable = yes
+    read only = no
+    guest ok = no
+    writeable = yes
+
+3 - ограничение доступа на запись для членов группы:
+
+[share]
+    path = /path/to/share
+    browseable = yes
+    read only = yes
+    write list = @groupname
+
+4 - переключатель SELinux для доступа к домашним каталогам:
+
+setsebool -P samba_enable_home_dirs on
+
+5 - ограничение доступа по сети:
+
+[share]
+    path = /path/to/share
+    browseable = yes
+    read only = no
+    hosts allow = 192.168.10.0/24
+    hosts deny = 0.0.0.0/0
+
+6 - команда для списка пользователей Samba:
+
+pdbedit -L
+
+7 - действие пользователя для доступа к многопользовательскому ресурсу:
+Пользователь должен использовать команду smbclient с опцией -U для указания своих учетных данных
+
+8 - настройка многопользовательского ресурса с alice:
+
+[share]
+    path = /path/to/share
+    browseable = yes
+    read only = no
+    guest ok = no
+    multiuser = yes
+    force user = alice
+
+9 - запрет просмотра учетных данных в fstab:
+Использовать опцию credentials=/path/to/credentials/file с файлом, доступным только root
+
+0 - команда для списка экспортируемых ресурсов:
+
+smbclient -L servername -U%
+
+# Выводы
+
+Я приобрел навыки настройки доступа групп пользователей к общим ресурсам
+по протоколу SMB.
+
